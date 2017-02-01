@@ -2,7 +2,6 @@
 
 from scapy.all import *
 import binascii
-from hashlib import sha1
 import hmac
 
 
