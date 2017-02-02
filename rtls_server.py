@@ -2,6 +2,7 @@
 
 from scapy.all import *
 import binascii
+from hashlib import sha1
 import hmac
 
 
@@ -106,15 +107,15 @@ def parse_ar_compound (pkt):
 def forge_rtls_header (pkt, msg_type):
 
 	pkt[Ether].src, pkt[Ether].dst = pkt[Ether].dst, pkt[Ether].src
-	del (pkt_ack[Ether].chksum)
+	del (pkt[Ether].chksum)
 
-	pkt_ack[IP].src, pkt_ack[IP].dst = pkt_ack[IP].dst, pkt_ack[IP].src
-	del (pkt_ack[UDP].chksum)
+	pkt[IP].src, pkt[IP].dst = pkt[IP].dst, pkt[IP].src
+	del (pkt[UDP].chksum)
 
-	pkt_ack[UDP].sport, pkt_ack[UDP].dport = pkt_ack[UDP].dport, pkt_ack[UDP].sport
-	del (pkt_ack[IP].chksum)
+	pkt[UDP].sport, pkt[UDP].dport = pkt[UDP].dport, pkt[UDP].sport
+	del (pkt[IP].chksum)
 
-	pkt_ack[RTLS].msg_type = msg_type
+	pkt[RTLS].msg_type = msg_type
 
 	return (pkt)
 
