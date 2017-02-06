@@ -2,21 +2,36 @@
 
 from scapy.all import *
 import binascii
-from hashlib import sha1
 import hmac
+from hashlib import sha1
+from time import time
+from threading import Thread
+from Queue import Queue
+import MySQLdb
+import sys
 
 
+# TO DO: could be fine to parse a JSON file to fetch the value of those parameters
 rtls_psk = "SECRET"
-rtls_port = 1212
 rtls_sta_rep_size = 44
+rtls_port = 1212
+
+# Set the capture parameters
 capture_interface = "eth0"
 capture_filter = "udp and dst port %i" % rtls_port
 
+# DB connection setup stuff
+db_user = 'rtls'
+db_pass = 'SECRET'
+db_data = 'rtls'
+db_con = MySQLdb.connect (user = db_user, passwd = db_pass, db = db_data)
+db_cur = db_con.cursor ()
 
 
 
 # Define the custom RTLS layer
 class RTLS (Packet):
+
 	name = "RTLS"
 
 	fields_desc = 	[
@@ -40,6 +55,29 @@ bind_layers (UDP, RTLS, sport = rtls_port)
 
 
 
+# Convert a HEX data rate into it's numeric value
+def convert_data_rate (hex_dr):
+
+	d_match = 	{
+				'00': '1',
+				'01': '2',
+				'02': '5.5',
+				'03': '6',
+				'04': '9',
+				'05': '11',
+				'06': '12',
+				'07': '18',
+				'08': '24',
+				'09': '36',
+				'0a': '48',
+				'0b': '54',
+				'ff': 'Meh?'
+			}
+	
+	return (d_match[hex_dr])
+
+
+
 def handle_rtls_pkt (pkt):
 
 	# If the receive RTLS packet is a compound report, parse it
@@ -54,52 +92,45 @@ def handle_rtls_pkt (pkt):
 
 def parse_ar_compound (pkt):
 
+	timestamp = time ()
+
 	# Foreach AR_STATION_REPORT
 	for i in range (0, pkt[RTLS].msg_nbr):
 
-		msg_type = pkt[RTLS].data[i].encode ("hex")[0:4]
-		msg_id = pkt[RTLS].data[i].encode ("hex")[4:8]
-		version_major = pkt[RTLS].data[i].encode ("hex")[8:10]
-		version_minor = pkt[RTLS].data[i].encode ("hex")[10:12]
-		data_length = pkt[RTLS].data[i].encode ("hex")[12:16]
-		ap_mac = pkt[RTLS].data[i].encode ("hex")[16:28]
-		padding = pkt[RTLS].data[i].encode ("hex")[28:32]
-		mac = pkt[RTLS].data[i].encode ("hex")[32:44]
-		noise_floor = pkt[RTLS].data[i].encode ("hex")[44:46]
-		data_rate = pkt[RTLS].data[i].encode ("hex")[46:48]
-		channel = pkt[RTLS].data[i].encode ("hex")[48:50]
-		rssi = pkt[RTLS].data[i].encode ("hex")[50:52]
-		type = pkt[RTLS].data[i].encode ("hex")[52:54]
-		associated = pkt[RTLS].data[i].encode ("hex")[54:56]
-		radio_bssid = pkt[RTLS].data[i].encode ("hex")[56:68]
-		mon_bssid = pkt[RTLS].data[i].encode ("hex")[68:80]
-		age = pkt[RTLS].data[i].encode ("hex")[80:88]
+		d_connection = {}
+		d_ap = {}
+
+		d_connection['timestamp'] = int (timestamp)
+		d_connection['data_length'] = pkt[RTLS].data[i].encode ("hex")[12:16]
+		d_connection['ap_mac'] = pkt[RTLS].data[i].encode ("hex")[16:28]
+		d_ap['mac'] = pkt[RTLS].data[i].encode ("hex")[16:28]
+		d_connection['padding'] = pkt[RTLS].data[i].encode ("hex")[28:32]
+		d_connection['client_mac'] = pkt[RTLS].data[i].encode ("hex")[32:44]
+		d_connection['noise_floor'] = int (pkt[RTLS].data[i].encode ("hex")[44:46], 16) - 256
+		d_connection['data_rate'] = convert_data_rate (pkt[RTLS].data[i].encode ("hex")[46:48])
+		d_connection['channel'] = int (pkt[RTLS].data[i].encode ("hex")[48:50], 16)
+		d_connection['rssi'] = int (pkt[RTLS].data[i].encode ("hex")[50:52], 16) - 256
+		d_connection['associated'] = int (pkt[RTLS].data[i].encode ("hex")[54:56], 16) % 2
+		d_ap['radio_bssid'] = pkt[RTLS].data[i].encode ("hex")[56:68]
+		d_ap['mon_bssid'] = pkt[RTLS].data[i].encode ("hex")[68:80]
+		d_connection['age'] = int (pkt[RTLS].data[i].encode ("hex")[80:88], 16)
+
+		# TODO: find a better way to handle dictionaries for SQL insert statements
+		insert_db ("INSERT INTO ap (mac, radio_bssid, mon_bssid) VALUES (%(mac)s, %(radio_bssid)s, %(mon_bssid)s)", d_ap)
+		insert_db ("INSERT INTO connection (timestamp, client_mac, ap_mac, age, associated, channel, data_rate, rssi, noise_floor) VALUES (%(timestamp)s, %(client_mac)s, %(ap_mac)s, %(age)s, %(associated)s, %(channel)s, %(data_rate)s, %(rssi)s, %(noise_floor)s)", d_connection)
+
+	db_con.commit ()
+	return (0)
 
 
+def insert_db (sql, dict):
 
-		print ("msg_type:\t%s" % msg_type)
-		print ("msg_id:\t\t%s" % msg_id)
-		print ("version_major:\t%s" % version_major)
-		print ("version_minor:\t%s" % version_minor)
-		print ("data_length:\t%s" % data_length)
-		print ("ap_mac:\t\t%s" % ap_mac)
-		print ("padding:\t%s" % padding)
-		print ("mac:\t\t%s" % mac)
-		print ("noise_floor:\t%s" % noise_floor)
-		print ("data_rate:\t%s" % data_rate)
-		print ("channel:\t%s" % channel)
-		print ("rssi:\t\t%s" % rssi)
-		print ("type:\t\t%s" % type)
-		print ("associated:\t%s" % associated)
-		print ("radio_bssid:\t%s" % radio_bssid)
-		print ("mon_bssid:\t%s" % mon_bssid)
-		print ("age:\t\t%s" % age)
+		try:
+			db_cur.execute (sql, dict)
 
-		if (i == pkt[RTLS].msg_nbr - 2):
-			print ("################################")
-
-
-	print ("##############################################################")
+		# TODO: properly handle mySQL exceptions
+		except Exception as e:
+			pass
 
 
 
@@ -132,14 +163,29 @@ def send_ar_ack (pkt):
 	pkt_ack[RTLS].signature = str (binascii.unhexlify (hmac.new (rtls_psk, str (pkt)[42:58], sha1).hexdigest ()))
 
 	# Send the forged RTLS ACK
+	print ("[*]\tSending ACK to %s" % pkt_ack[IP].dst)
 	sendp (pkt_ack, iface = capture_interface)
 
 	return (0)
 
 
 
+def main (args):
+
+	print ("[*]\tSniffing for RTLS packets")
+
+	# Sniff RTLS notifications
+	sniff (iface = capture_interface, prn = handle_rtls_pkt, filter = capture_filter, store = 0)
 
 
 
-# Sniff RTLS notifications
-sniff (iface = capture_interface, prn = handle_rtls_pkt, filter = capture_filter, store = 0)
+if __name__ == '__main__':
+
+	try:
+		main (sys.argv)
+
+	except KeyboardInterrupt:
+		print ("[!]\tCaught a SIGINT, exiting...")
+		db_con.commit ()
+		db_con.close ()
+		sys.exit (0)
